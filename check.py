@@ -30,6 +30,10 @@ FAIL_REALERT_EVERY = 36
 # treated as a bad fetch, not as mass withdrawals.
 SHRINK_GUARD = 0.5
 
+# The page prints its own count ("Že prijavljenih : 32"). We use it as a
+# checksum so an empty start list can be told apart from rows we failed to read.
+REGISTERED_RE = re.compile(r"Že prijavljenih[^0-9]*(\d+)")
+
 ROOT = Path(__file__).resolve().parent
 RACES_FILE = ROOT / "races.txt"
 STATE_DIR = ROOT / "state"
@@ -76,8 +80,7 @@ def fetch(url, attempts=3):
         try:
             req = urllib.request.Request(url, headers=HEADERS)
             with urllib.request.urlopen(req, timeout=30) as resp:
-                raw = resp.read()
-            return raw.decode("utf-8", errors="replace")
+                return resp.read().decode("utf-8", errors="replace")
         except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
             last = exc
             if i < attempts - 1:
@@ -85,14 +88,28 @@ def fetch(url, attempts=3):
     raise ParseError("fetch failed: %s" % last)
 
 
-def parse_start_list(html):
+def parse_start_list(html, expected_id=None):
     """Return (race_name, [rider, ...]) for every rider on the page."""
     soup = BeautifulSoup(html, "html.parser")
 
+    # An unknown race id serves the home page under the requested URL: same
+    # 200, same start-list-shaped table, same "0 registered" counter. The tell
+    # is og:url, where the server echoes the slug it resolved the id to - real
+    # races get ".../6399/vzpon-na-jost-2026/", an unknown id gets ".../999999//".
+    # Without this, a typo in races.txt looks like a healthy empty race.
+    og_url = soup.find("meta", property="og:url")
+    resolved = re.search(
+        r"/checkings/(\d+)/([^/?#]*)", og_url.get("content", "") if og_url else ""
+    )
+    if not resolved or not resolved.group(2):
+        raise ParseError("page is not a race - check the race id in the URL")
+    if expected_id and resolved.group(1) != expected_id:
+        raise ParseError(
+            "page is race %s, expected %s" % (resolved.group(1), expected_id)
+        )
+
     og = soup.find("meta", property="og:title")
-    name = og.get("content", "").strip() if og else ""
-    if not name and soup.title:
-        name = re.sub(r"\s*-\s*prijavim\.se\s*$", "", soup.title.get_text(strip=True))
+    name = (og.get("content", "").strip() if og else "") or resolved.group(2)
 
     table = None
     cols = {}
@@ -145,9 +162,19 @@ def parse_start_list(html):
             }
         )
 
-    if not riders:
-        raise ParseError("start list table parsed to zero riders")
-    return name or "prijavim.se", riders
+    # A race with nobody registered yet is a normal, expected state - and it is
+    # exactly when we most want to be watching. Only treat zero riders as
+    # breakage when the page itself claims somebody is registered.
+    claimed = REGISTERED_RE.search(html)
+    if claimed:
+        if int(claimed.group(1)) != len(riders):
+            raise ParseError(
+                "page says %s registered, parsed %d" % (claimed.group(1), len(riders))
+            )
+    elif not riders:
+        raise ParseError("no registration count on page and zero riders parsed")
+
+    return name, riders
 
 
 def notify(title, message, url=None, priority=3, tags=None):
@@ -197,6 +224,14 @@ def describe(rider):
     return line
 
 
+def race_label(url):
+    """Best available human name for a race, even when the fetch just failed."""
+    state = load_json(STATE_DIR / ("%s.json" % race_id(url)), None)
+    if state and state.get("race"):
+        return state["race"]
+    return url.rstrip("/").rsplit("/", 1)[-1] or url
+
+
 def check_race(url):
     """Check one race. Returns True on success, False if the check failed."""
     path = STATE_DIR / ("%s.json" % race_id(url))
@@ -204,7 +239,7 @@ def check_race(url):
 
     try:
         html = fetch(url)
-        race_name, everyone = parse_start_list(html)
+        race_name, everyone = parse_start_list(html, race_id(url))
     except ParseError as exc:
         log("FAIL %s: %s" % (url, exc))
         return False
@@ -254,30 +289,35 @@ def main():
         return 0
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    ok = sum(1 for url in races if check_race(url))
-    failed = len(races) - ok
 
-    health = load_json(HEALTH_FILE, {"consecutive_failures": 0})
-    streak = health.get("consecutive_failures", 0)
+    health = load_json(HEALTH_FILE, {})
+    if "consecutive_failures" in health:  # migrate the old single-counter file
+        health = {}
 
-    # Only count a streak when nothing at all got through: one dead race URL
-    # among several should not look like a broken watcher.
-    if failed and ok == 0:
-        streak += 1
+    # Track failures per race. One race that quietly stops parsing has to raise
+    # an alert on its own, or it would hide behind the races that still work.
+    for url in races:
+        rid = race_id(url)
+        if check_race(url):
+            health[rid] = 0
+            continue
+
+        streak = health.get(rid, 0) + 1
+        health[rid] = streak
         if streak == FAIL_ALERT_AFTER or (
             streak > FAIL_ALERT_AFTER and streak % FAIL_REALERT_EVERY == 0
         ):
             notify(
-                "Notifier is broken",
-                "%d checks in a row failed. The site may be down or the start "
-                "list layout changed." % streak,
+                "Check failing: %s" % race_label(url),
+                "%d checks in a row failed. The site may be down, the race may "
+                "have been removed, or the start list layout changed." % streak,
+                url=url,
                 priority=4,
                 tags=["warning"],
             )
-    else:
-        streak = 0
 
-    save_json(HEALTH_FILE, {"consecutive_failures": streak})
+    watched = {race_id(u) for u in races}
+    save_json(HEALTH_FILE, {k: v for k, v in health.items() if k in watched})
     return 0
 
 

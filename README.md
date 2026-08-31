@@ -105,14 +105,22 @@ $env:NTFY_TOPIC = "your-topic"; python check.py
 ## Failure handling
 
 - Transient errors are retried 3 times per check.
-- Three failed checks in a row (~30 min) send a `Notifier is broken` alert, then
-  it goes quiet and reminds you every ~3 hours until it recovers. So a site
-  redesign can't silently stop your notifications.
+- Failures are counted **per race**. Three in a row (~30 min) send a
+  `Check failing: <race>` alert, then it goes quiet and reminds you every ~3
+  hours until that race recovers. One broken race can't hide behind the others
+  that still work.
+- The page prints its own registration count, which is used as a checksum. If
+  the site says 32 are registered and we only parsed 27, that's a layout change
+  and it alerts rather than silently under-reporting.
+- A race nobody has entered yet is a normal state, not an error — those are
+  precisely the ones worth watching from day one.
+- A wrong race id serves the home page under your URL: same `200`, same
+  start-list-shaped table, same `0 registered`. That's caught via `og:url`,
+  where the server echoes the slug it resolved — an unknown id gets an empty
+  one. So a typo in `races.txt` alerts instead of looking like an empty race.
 - If a start list shrinks by more than half between checks, that's treated as a
   bad render rather than mass withdrawals: the old state is kept and the check
   counts as a failure.
-- A single dead race URL among several doesn't trigger the broken alert — that
-  needs *every* race to fail.
 
 ## Things worth knowing
 
