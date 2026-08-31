@@ -1,0 +1,4 @@
+# One race URL per line. Lines starting with # are ignored.
+# Add a line when you enter a race, delete it once the race is done.
+
+https://prijavim.se/calendar/checkings/6395/5--cankarjev-pokal---kronometer-in-vzpon-na-ulovko-2026

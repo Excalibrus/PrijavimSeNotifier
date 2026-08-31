@@ -1,0 +1,113 @@
+# PrijavimSeNotifier
+
+Pushes a notification to your Android phone when a new rider registers in your
+category on a [prijavim.se](https://prijavim.se) start list.
+
+Checks every 5 minutes on GitHub Actions. Notifications arrive through
+[ntfy](https://ntfy.sh) — no account, no API key, no app to build.
+
+## Setup
+
+### 1. ntfy on your phone
+
+Install **ntfy** ([Play Store](https://play.google.com/store/apps/details?id=io.heckel.ntfy)
+or [F-Droid](https://f-droid.org/packages/io.heckel.ntfy/)), tap **+**, and
+subscribe to a topic.
+
+Pick a long random topic name. ntfy topics are unauthenticated, so anyone who
+guesses the name can read your notifications — and publish to them.
+
+```bash
+python -c "import secrets; print('prijavimse-' + secrets.token_hex(8))"
+```
+
+### 2. Push this repo to GitHub
+
+A private repo is fine — Actions minutes are free for both public and private.
+
+### 3. Add the topic as a secret
+
+Repo **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Name | Value |
+| --- | --- |
+| `NTFY_TOPIC` | the topic name from step 1 |
+
+Watching a category other than Master A? Add a repository *variable* (same page,
+Variables tab) named `CATEGORY`. The category string has to match the site
+exactly, e.g. `Master B`, `Amaterji`, `Ženske A`.
+
+### 4. Turn it on
+
+Open the **Actions** tab and enable workflows. Then run **check start lists →
+Run workflow** once by hand — you should get a `Now watching` notification
+within a minute. If that arrives, the schedule will work.
+
+## Adding a race
+
+Add the event URL to [`races.txt`](races.txt), one per line:
+
+```
+https://prijavim.se/calendar/checkings/6395/5--cankarjev-pokal---kronometer-in-vzpon-na-ulovko-2026
+```
+
+GitHub's web editor works fine from your phone, so you can add a race right
+after you enter it. The first check records who is already registered and sends
+one `Now watching — N Master A already registered` message; after that you only
+hear about genuinely new entries.
+
+Delete the line once the race is over. Nothing breaks if you forget — a finished
+race just stops producing new registrations.
+
+## Running it locally
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+python check.py
+```
+
+With no `NTFY_TOPIC` set it prints what it *would* have sent instead of pushing,
+which is the easiest way to try changes. To push for real from PowerShell:
+
+```bash
+$env:NTFY_TOPIC = "your-topic"; python check.py
+```
+
+## How it works
+
+- Fetches each start list with a browser `User-Agent` — the site returns `403`
+  without one.
+- Finds the table with `Priimek` / `Kategorija` headers and reads columns by
+  header name, not by position, so an added column doesn't break it.
+- Identifies riders by their **profile ID** (`/profile/view/48707/...`) rather
+  than by name, so CSS-uppercased surnames and shifting row numbers don't
+  produce phantom registrations.
+- Diffs against `state/<race-id>.json`, which the workflow commits back to the
+  repo. That doubles as a dated history of who signed up when.
+
+## Failure handling
+
+- Transient errors are retried 3 times per check.
+- Three failed checks in a row (~30 min) send a `Notifier is broken` alert, then
+  it goes quiet and reminds you every ~3 hours until it recovers. So a site
+  redesign can't silently stop your notifications.
+- If a start list shrinks by more than half between checks, that's treated as a
+  bad render rather than mass withdrawals: the old state is kept and the check
+  counts as a failure.
+- A single dead race URL among several doesn't trigger the broken alert — that
+  needs *every* race to fail.
+
+## Things worth knowing
+
+- **Timing.** GitHub runs scheduled workflows on a best-effort basis. `*/5` is
+  the floor, not a guarantee; at busy hours the real gap can be 15–20 minutes.
+  If you ever need tight 5-minute timing, the same `check.py` runs unchanged
+  under any cron.
+- **Inactivity.** GitHub disables scheduled workflows after 60 days without
+  repo activity. State commits normally keep it alive, but if nothing changes
+  for two months you'll need to re-enable it in the Actions tab.
+- **Re-registrations.** A rider who withdraws and signs up again notifies you a
+  second time. That's deliberate — it is a new registration.

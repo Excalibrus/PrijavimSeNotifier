@@ -1,0 +1,46 @@
+name: check start lists
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub runs scheduled workflows on a best-effort basis,
+    # so expect the real gap to be 5-20 minutes at busy times of day.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# Never let two checks race each other to commit state.
+concurrency:
+  group: check-start-lists
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - run: python check.py
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          CATEGORY: ${{ vars.CATEGORY || 'Master A' }}
+
+      - name: Commit state
+        run: |
+          git config user.name "prijavimse-notifier"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state
+          if git diff --staged --quiet; then
+            echo "no state change"
+          else
+            git commit -m "state: $(date -u +%FT%TZ)"
+            git pull --rebase --autostash
+            git push
+          fi
