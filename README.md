@@ -23,7 +23,15 @@ python -c "import secrets; print('prijavimse-' + secrets.token_hex(8))"
 
 ### 2. Push this repo to GitHub
 
-A private repo is fine — Actions minutes are free for both public and private.
+**Use a public repo.** Actions minutes are unlimited on public repos but capped
+at 2,000/month on private ones, and every job bills as a full minute. A
+5-minute schedule is ~8,640 runs/month, so on a private repo the quota runs out
+in about a week and the schedule stops. On a private repo, `*/30` is the
+fastest cadence that fits the free tier.
+
+Nothing here is sensitive: the code, the race URLs and the start lists are all
+public information on prijavim.se already. `NTFY_TOPIC` is a GitHub Actions
+secret and stays hidden even in a public repo.
 
 ### 3. Add the topic as a secret
 
