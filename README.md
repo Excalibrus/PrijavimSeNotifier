@@ -51,6 +51,12 @@ Open the **Actions** tab and enable workflows. Then run **check start lists →
 Run workflow** once by hand — you should get a `Now watching` notification
 within a minute. If that arrives, the schedule will work.
 
+If the run pushes a notification but the **Commit state** step fails with a
+`403`, the repo is set to read-only workflow tokens. Fix it under **Settings →
+Actions → General → Workflow permissions → Read and write permissions**.
+Without it state can't be saved, and you'd get the same `Now watching` message
+on every single run.
+
 ## Adding a race
 
 Add the event URL to [`races.txt`](races.txt), one per line:
