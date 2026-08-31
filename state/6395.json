@@ -1,0 +1,21 @@
+{
+ "url": "https://prijavim.se/calendar/checkings/6395/5--cankarjev-pokal---kronometer-in-vzpon-na-ulovko-2026",
+ "race": "5. Cankarjev pokal - kronometer in vzpon na Ulovko 2026",
+ "total": 32,
+ "riders": {
+  "p48707": {
+   "id": "p48707",
+   "name": "Ternar Tadej",
+   "club": "ŠD BAM.BI",
+   "category": "Master A",
+   "trasa": "Vzpon + kronometer"
+  },
+  "p25056": {
+   "id": "p25056",
+   "name": "Sekne Gal",
+   "club": "ŠD BAM.BI",
+   "category": "Master A",
+   "trasa": "Vzpon + kronometer"
+  }
+ }
+}
