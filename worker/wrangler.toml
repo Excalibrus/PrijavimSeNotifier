@@ -8,6 +8,8 @@ crons = ["*/5 * * * *"]
 [vars]
 CATEGORY = "Master A"
 RACES_URL = "https://raw.githubusercontent.com/Excalibrus/PrijavimSeNotifier/main/races.txt"
+# Repo whose "notify" workflow actually sends the push (see GH_TOKEN secret).
+GH_REPO = "Excalibrus/PrijavimSeNotifier"
 
 # Created with:
 #   npx wrangler kv namespace create STATE

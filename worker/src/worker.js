@@ -199,27 +199,68 @@ async function fetchRace(url, expectedId) {
   throw last instanceof ParseError ? last : new ParseError(String(last));
 }
 
-async function notify(env, { title, message, url, priority = 3, tags }) {
-  // A pasted secret can carry stray whitespace, and ntfy rejects topic names
-  // outside [-_A-Za-z0-9], so trim before using it.
-  const topic = (env.NTFY_TOPIC || "").trim();
-  if (!topic) {
-    console.log(`[would notify] ${title} / ${message}`);
-    return;
+/**
+ * Find the chat to message, so the only secret needed is the bot token.
+ *
+ * Telegram reports who has written to the bot via getUpdates, so the first
+ * time round we take the most recent chat and remember it in KV.
+ */
+async function telegramChatId(env, token) {
+  if (env.TELEGRAM_CHAT_ID) return String(env.TELEGRAM_CHAT_ID).trim();
+  const cached = await env.STATE.get("telegram_chat");
+  if (cached) return cached;
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+  if (!res.ok) {
+    console.log(`telegram getUpdates failed: HTTP ${res.status}`);
+    return null;
   }
-  const body = {
-    topic,
-    title,
-    message,
-    priority,
-    tags: tags || ["bicyclist"],
-  };
+  const data = await res.json();
+  const withChat = (data.result || [])
+    .map((u) => u.message || u.channel_post)
+    .filter((m) => m && m.chat && m.chat.id);
+  if (!withChat.length) {
+    console.log("telegram: no chat found - send your bot a message once");
+    return null;
+  }
+  const id = String(withChat[withChat.length - 1].chat.id);
+  await env.STATE.put("telegram_chat", id);
+  console.log(`telegram: learned chat id ${id}`);
+  return id;
+}
+
+async function sendTelegram(env, token, { title, message, url }) {
+  const chat = await telegramChatId(env, token);
+  if (!chat) return "FAILED telegram - no chat id";
+  let text = `${title}\n\n${message}`;
+  if (url) text += `\n\n${url}`;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chat,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+    if (!res.ok) {
+      return `FAILED telegram HTTP ${res.status} ${(await res.text()).slice(0, 200)}`;
+    }
+    return "ok via telegram";
+  } catch (err) {
+    return `FAILED telegram ${err}`;
+  }
+}
+
+async function sendNtfy(env, topic, { title, message, url, priority, tags }) {
+  const body = { topic, title, message, priority, tags: tags || ["bicyclist"] };
   if (url) body.click = url;
 
   // Anonymous publishing to ntfy.sh is rate limited per source IP, and a
   // Worker shares Cloudflare's egress pool with everyone else - so the daily
-  // quota gets exhausted by strangers and every push comes back 429. An
-  // access token bills the request to the account instead of the IP.
+  // quota gets exhausted by strangers and every push comes back 429. A free
+  // account token does NOT lift this; only a paid plan does.
   const headers = { "Content-Type": "application/json" };
   const token = (env.NTFY_TOKEN || "").trim();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -233,15 +274,72 @@ async function notify(env, { title, message, url, priority = 3, tags }) {
     // fetch does not throw on 4xx/5xx, so a rejected push would otherwise be
     // swallowed and look exactly like a delivered one.
     if (!res.ok) {
-      const detail = (await res.text()).slice(0, 300);
-      console.log(`ntfy push rejected: HTTP ${res.status} ${detail}`);
-    } else {
-      console.log(`ntfy push ok: ${title}`);
+      return `FAILED ntfy HTTP ${res.status} ${(await res.text()).slice(0, 200)}`;
     }
+    return "ok via ntfy";
   } catch (err) {
-    // A failed push must not abort the rest of the run.
-    console.log(`ntfy push failed: ${err}`);
+    return `FAILED ntfy ${err}`;
   }
+}
+
+/**
+ * Hand the push to GitHub Actions instead of sending it from here.
+ *
+ * ntfy.sh rate limits anonymous publishing per source IP and a Worker shares
+ * Cloudflare's egress pool, so pushing directly from here always returns 429.
+ * GitHub's runners have their own address that delivers fine. Only the cron
+ * *schedule* is throttled on GitHub - repository_dispatch fires immediately,
+ * so this keeps 5-minute detection while borrowing a working sender.
+ */
+async function sendViaGitHub(env, token, { title, message, url, priority }) {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${env.GH_REPO}/dispatches`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+          "User-Agent": "prijavimse-notifier",
+        },
+        body: JSON.stringify({
+          event_type: "notify",
+          client_payload: { title, message, url, priority },
+        }),
+      }
+    );
+    if (res.status === 204) return "ok via github";
+    return `FAILED github HTTP ${res.status} ${(await res.text()).slice(0, 200)}`;
+  } catch (err) {
+    return `FAILED github ${err}`;
+  }
+}
+
+async function notify(env, opts) {
+  const opts2 = { priority: 3, ...opts };
+  const gh = (env.GH_TOKEN || "").trim();
+  const tg = (env.TELEGRAM_TOKEN || "").trim();
+  const topic = (env.NTFY_TOPIC || "").trim();
+
+  let result;
+  if (gh && env.GH_REPO) result = await sendViaGitHub(env, gh, opts2);
+  else if (tg) result = await sendTelegram(env, tg, opts2);
+  else if (topic) result = await sendNtfy(env, topic, opts2);
+  else {
+    console.log(`[would notify] ${opts2.title} / ${opts2.message}`);
+    return;
+  }
+
+  console.log(`push: ${result} - ${opts2.title}`);
+
+  // Delivery failures are invisible by nature: we cannot notify you that
+  // notifying is broken. Record the outcome so the status page can show it,
+  // and so an expired token surfaces somewhere.
+  await env.STATE.put(
+    "lastpush",
+    JSON.stringify({ at: new Date().toISOString(), result, title: opts2.title })
+  );
 }
 
 function describe(r) {
@@ -423,6 +521,10 @@ export default {
     if (meta.lastRun) {
       const age = Math.round((Date.now() - Date.parse(meta.lastRun)) / 1000);
       out.push(`last run: ${meta.lastRun} (${age}s ago, ${meta.runs} total)`);
+    }
+    const push = await env.STATE.get("lastpush", "json");
+    if (push) {
+      out.push(`last push: ${push.at} ${push.result} (${push.title})`);
     }
     out.push("");
     for (const [id, fails] of Object.entries(health)) {

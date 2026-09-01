@@ -1,0 +1,62 @@
+name: send notification
+
+# Triggered by the Cloudflare Worker via repository_dispatch. The Worker does
+# the checking (every 5 minutes, reliably), but cannot deliver the push:
+# ntfy.sh rate limits anonymous publishing per source IP and Cloudflare's
+# shared egress pool is always over quota. A GitHub runner has an address that
+# works. Unlike `schedule`, repository_dispatch is not throttled - it fires
+# within seconds.
+
+on:
+  repository_dispatch:
+    types: [notify]
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push to ntfy
+        env:
+          # Never interpolate client_payload into the shell: it comes from
+          # outside and would be a script injection. Pass it as environment.
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          TITLE: ${{ github.event.client_payload.title }}
+          MESSAGE: ${{ github.event.client_payload.message }}
+          CLICK: ${{ github.event.client_payload.url }}
+          PRIORITY: ${{ github.event.client_payload.priority }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          topic = os.environ.get("NTFY_TOPIC", "").strip()
+          if not topic:
+              raise SystemExit("NTFY_TOPIC secret is not set")
+
+          payload = {
+              "topic": topic,
+              "title": os.environ.get("TITLE") or "prijavim.se",
+              "message": os.environ.get("MESSAGE") or "",
+              "priority": int(os.environ.get("PRIORITY") or 3),
+              "tags": ["bicyclist"],
+          }
+          click = os.environ.get("CLICK")
+          if click:
+              payload["click"] = click
+
+          headers = {"Content-Type": "application/json"}
+          token = os.environ.get("NTFY_TOKEN", "").strip()
+          if token:
+              headers["Authorization"] = "Bearer " + token
+
+          req = urllib.request.Request(
+              "https://ntfy.sh/",
+              data=json.dumps(payload).encode("utf-8"),
+              headers=headers,
+              method="POST",
+          )
+          # urlopen raises on 4xx/5xx, so a rejected push fails the run and
+          # shows up red rather than disappearing.
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              print("ntfy accepted:", resp.status, payload["title"])
+          PY
