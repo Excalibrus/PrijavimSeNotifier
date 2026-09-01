@@ -3,8 +3,10 @@
 Pushes a notification to your Android phone when a new rider registers in your
 category on a [prijavim.se](https://prijavim.se) start list.
 
-Checks every 5 minutes on GitHub Actions. Notifications arrive through
-[ntfy](https://ntfy.sh) — no account, no API key, no app to build.
+A Cloudflare Worker checks every 5 minutes; GitHub Actions delivers the push;
+it arrives in the [ntfy](https://ntfy.sh) app on your phone. The split is
+deliberate and explained under [Why the Worker does not send the push
+itself](#why-the-worker-does-not-send-the-push-itself).
 
 ## Setup
 
@@ -92,31 +94,59 @@ Create the KV namespace and put the printed id into `wrangler.toml`:
 npx wrangler kv namespace create STATE
 ```
 
-Set the same ntfy topic the Actions version uses:
+Set the ntfy topic (used by the GitHub side, see below):
 
 ```bash
 npx wrangler secret put NTFY_TOPIC
 ```
 
-**An ntfy access token is required here, not optional.** Anonymous publishing
-to ntfy.sh is rate limited *per source IP*, and a Worker publishes from
-Cloudflare's shared egress pool — so the daily quota is already exhausted by
-other people and every push returns `HTTP 429`. A token bills the request to
-your account instead. Create one at [ntfy.sh/account](https://ntfy.sh/account),
-then:
+Then the token that lets the Worker trigger the sending workflow:
 
 ```bash
-npx wrangler secret put NTFY_TOKEN
+npx wrangler secret put GH_TOKEN
 ```
 
-The Python version accepts the same `NTFY_TOKEN` variable, but does not need it
-when run from a home connection or a GitHub runner.
+A fine-grained token scoped to this repository only, with **Contents: Read and
+write** — that is what `repository_dispatch` requires. Prefer no expiry: an
+expired token stops notifications silently.
 
 ```bash
 npx wrangler deploy
 ```
 
 The first run seeds every race and sends one `Now watching` message each.
+
+### Why the Worker does not send the push itself
+
+ntfy.sh rate limits anonymous publishing **per source IP**, and a Worker
+publishes from Cloudflare's shared egress pool, so the daily quota is already
+exhausted by other people and every push returns `HTTP 429`. A free ntfy
+account does *not* lift this — only a paid plan does. Measured:
+
+| Sender | Auth | Result |
+| --- | --- | --- |
+| Home connection | anonymous | delivered |
+| GitHub runner | anonymous | delivered |
+| Cloudflare Worker | anonymous | `429` |
+| Cloudflare Worker | free account token | `429` |
+
+So the two halves are split across the hosts that can each do their job:
+
+```
+Cloudflare Worker  ->  checks every 5 min (GitHub throttles schedules to hours)
+       | repository_dispatch, only when there is something to say
+GitHub Actions     ->  sends the push (Cloudflare's address is rate limited)
+       v
+ntfy app on the phone
+```
+
+`repository_dispatch` is *not* throttled the way `schedule` is — measured at
+1.3 seconds from dispatch to the workflow running.
+
+The Worker still contains working ntfy and Telegram senders. It picks whichever
+is configured: `GH_TOKEN` + `GH_REPO` first, then `TELEGRAM_TOKEN`, then
+`NTFY_TOPIC` directly. Direct ntfy is fine from a host with its own address.
+
 
 ### Relationship to the GitHub Actions workflow
 
