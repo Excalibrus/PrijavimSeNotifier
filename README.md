@@ -73,7 +73,63 @@ hear about genuinely new entries.
 Delete the line once the race is over. Nothing breaks if you forget — a finished
 race just stops producing new registrations.
 
-## Running it locally
+## Cloudflare Worker (the 5-minute path)
+
+GitHub throttles `*/5` schedules to roughly one run every 2–4 hours, so the
+Worker in [`worker/`](worker/) is what actually delivers 5-minute checks. Same
+logic, same notifications, cron that is honoured.
+
+It reads this repo's `races.txt` over HTTPS at run time, so **adding a race
+stays a one-line edit here with no redeploy**.
+
+```bash
+cd worker && npm install
+```
+
+Create the KV namespace and put the printed id into `wrangler.toml`:
+
+```bash
+npx wrangler kv namespace create STATE
+```
+
+Set the same ntfy topic the Actions version uses:
+
+```bash
+npx wrangler secret put NTFY_TOPIC
+```
+
+```bash
+npx wrangler deploy
+```
+
+The first run seeds every race and sends one `Now watching` message each.
+
+### Once the Worker is live
+
+Delete the `schedule:` block from
+[`.github/workflows/check.yml`](.github/workflows/check.yml). Otherwise both
+systems watch the same races with separate state and you get **two pushes for
+every new rider**. Leaving `workflow_dispatch` in place keeps the Actions run
+available as a manual backup.
+
+### Poking at it
+
+The Worker's URL exposes two read-only endpoints — neither notifies nor writes
+state, so they are safe to hit:
+
+- `/` — every watched race, how many are in your category, and failure counts
+- `/parse?url=<race url>` — the parsed start list as JSON, for debugging
+
+Local development needs no Cloudflare account:
+
+```bash
+npx wrangler dev --local --test-scheduled
+```
+
+Then `curl "http://127.0.0.1:8787/__scheduled"` to fire a check. With no
+`NTFY_TOPIC` set it logs what it would have sent instead of pushing.
+
+## Running the Python version locally
 
 ```bash
 pip install -r requirements.txt
