@@ -350,6 +350,14 @@ export async function run(env) {
   if (JSON.stringify(next) !== JSON.stringify(health)) {
     await env.STATE.put("health", JSON.stringify(next));
   }
+
+  // Proof of life. A worker that stops running raises no alert of its own, so
+  // record when it last ran and let the status page show how stale that is.
+  const meta = (await env.STATE.get("meta", "json")) || { runs: 0 };
+  await env.STATE.put(
+    "meta",
+    JSON.stringify({ lastRun: new Date().toISOString(), runs: (meta.runs || 0) + 1 })
+  );
   return lines.join("\n");
 }
 
@@ -390,7 +398,13 @@ export default {
     }
 
     const health = (await env.STATE.get("health", "json")) || {};
-    const out = [`category: ${env.CATEGORY || "Master A"}`, ""];
+    const meta = (await env.STATE.get("meta", "json")) || {};
+    const out = [`category: ${env.CATEGORY || "Master A"}`];
+    if (meta.lastRun) {
+      const age = Math.round((Date.now() - Date.parse(meta.lastRun)) / 1000);
+      out.push(`last run: ${meta.lastRun} (${age}s ago, ${meta.runs} total)`);
+    }
+    out.push("");
     for (const [id, fails] of Object.entries(health)) {
       const st = await env.STATE.get(`race:${id}`, "json");
       out.push(
