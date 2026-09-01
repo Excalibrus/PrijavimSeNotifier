@@ -30,6 +30,7 @@ jobs:
       - run: python check.py
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           CATEGORY: ${{ vars.CATEGORY || 'Master A' }}
 
       - name: Commit state

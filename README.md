@@ -98,6 +98,20 @@ Set the same ntfy topic the Actions version uses:
 npx wrangler secret put NTFY_TOPIC
 ```
 
+**An ntfy access token is required here, not optional.** Anonymous publishing
+to ntfy.sh is rate limited *per source IP*, and a Worker publishes from
+Cloudflare's shared egress pool — so the daily quota is already exhausted by
+other people and every push returns `HTTP 429`. A token bills the request to
+your account instead. Create one at [ntfy.sh/account](https://ntfy.sh/account),
+then:
+
+```bash
+npx wrangler secret put NTFY_TOKEN
+```
+
+The Python version accepts the same `NTFY_TOKEN` variable, but does not need it
+when run from a home connection or a GitHub runner.
+
 ```bash
 npx wrangler deploy
 ```

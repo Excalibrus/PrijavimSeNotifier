@@ -19,7 +19,8 @@ from bs4 import BeautifulSoup
 
 CATEGORY = os.environ.get("CATEGORY", "Master A")
 NTFY_SERVER = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
+NTFY_TOKEN = os.environ.get("NTFY_TOKEN", "").strip()
 
 # Alert once the watcher has failed this many checks in a row, then remind
 # every FAIL_REALERT_EVERY failures after that (~3h at a 5 minute cadence).
@@ -190,10 +191,18 @@ def notify(title, message, url=None, priority=3, tags=None):
     }
     if url:
         payload["click"] = url
+
+    # Anonymous publishing to ntfy.sh is rate limited per source IP. An access
+    # token bills the request to the account instead, which matters when the
+    # sender shares an egress pool with other users.
+    headers = {"Content-Type": "application/json"}
+    if NTFY_TOKEN:
+        headers["Authorization"] = "Bearer %s" % NTFY_TOKEN
+
     req = urllib.request.Request(
         NTFY_SERVER + "/",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:

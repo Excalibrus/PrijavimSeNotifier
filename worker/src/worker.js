@@ -200,24 +200,44 @@ async function fetchRace(url, expectedId) {
 }
 
 async function notify(env, { title, message, url, priority = 3, tags }) {
-  if (!env.NTFY_TOPIC) {
+  // A pasted secret can carry stray whitespace, and ntfy rejects topic names
+  // outside [-_A-Za-z0-9], so trim before using it.
+  const topic = (env.NTFY_TOPIC || "").trim();
+  if (!topic) {
     console.log(`[would notify] ${title} / ${message}`);
     return;
   }
   const body = {
-    topic: env.NTFY_TOPIC,
+    topic,
     title,
     message,
     priority,
     tags: tags || ["bicyclist"],
   };
   if (url) body.click = url;
+
+  // Anonymous publishing to ntfy.sh is rate limited per source IP, and a
+  // Worker shares Cloudflare's egress pool with everyone else - so the daily
+  // quota gets exhausted by strangers and every push comes back 429. An
+  // access token bills the request to the account instead of the IP.
+  const headers = { "Content-Type": "application/json" };
+  const token = (env.NTFY_TOKEN || "").trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   try {
-    await fetch(env.NTFY_SERVER || "https://ntfy.sh/", {
+    const res = await fetch(env.NTFY_SERVER || "https://ntfy.sh/", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
+    // fetch does not throw on 4xx/5xx, so a rejected push would otherwise be
+    // swallowed and look exactly like a delivered one.
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 300);
+      console.log(`ntfy push rejected: HTTP ${res.status} ${detail}`);
+    } else {
+      console.log(`ntfy push ok: ${title}`);
+    }
   } catch (err) {
     // A failed push must not abort the rest of the run.
     console.log(`ntfy push failed: ${err}`);
