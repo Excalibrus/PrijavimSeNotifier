@@ -1,10 +1,10 @@
 name: check start lists
 
+# Manual only. The 5-minute schedule moved to the Cloudflare Worker in
+# worker/, because GitHub throttled this cron to roughly one run every 2-4
+# hours. Re-adding a schedule here would double every notification, since the
+# two systems keep separate state.
 on:
-  schedule:
-    # Every 5 minutes. GitHub runs scheduled workflows on a best-effort basis,
-    # so expect the real gap to be 5-20 minutes at busy times of day.
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 # Never let two checks race each other to commit state.

@@ -104,13 +104,15 @@ npx wrangler deploy
 
 The first run seeds every race and sends one `Now watching` message each.
 
-### Once the Worker is live
+### Relationship to the GitHub Actions workflow
 
-Delete the `schedule:` block from
-[`.github/workflows/check.yml`](.github/workflows/check.yml). Otherwise both
-systems watch the same races with separate state and you get **two pushes for
-every new rider**. Leaving `workflow_dispatch` in place keeps the Actions run
-available as a manual backup.
+The Worker owns the schedule. The `schedule:` block has been removed from
+[`.github/workflows/check.yml`](.github/workflows/check.yml) — running both
+would mean two pushes for every new rider, since each keeps its own state.
+
+The workflow is still there on `workflow_dispatch`, so the Python version stays
+available as a manual backup, and as the reference implementation the Worker is
+tested against.
 
 ### Poking at it
 

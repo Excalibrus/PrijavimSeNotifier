@@ -366,6 +366,17 @@ export default {
     if (url.pathname === "/parse") {
       const target = url.searchParams.get("url");
       if (!target) return new Response("pass ?url=<race url>\n", { status: 400 });
+      // The workers.dev URL is public, so keep this from being usable as a
+      // general-purpose fetch relay for arbitrary hosts.
+      let host;
+      try {
+        host = new URL(target).hostname;
+      } catch {
+        return new Response("bad url\n", { status: 400 });
+      }
+      if (host !== "prijavim.se" && !host.endsWith(".prijavim.se")) {
+        return new Response("only prijavim.se urls\n", { status: 403 });
+      }
       try {
         const parsed = await fetchRace(target, raceId(target));
         return Response.json({

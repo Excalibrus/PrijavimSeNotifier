@@ -9,8 +9,8 @@ crons = ["*/5 * * * *"]
 CATEGORY = "Master A"
 RACES_URL = "https://raw.githubusercontent.com/Excalibrus/PrijavimSeNotifier/main/races.txt"
 
-# Replace id with the one printed by:
+# Created with:
 #   npx wrangler kv namespace create STATE
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "1f94c3d186264f618466f63222f4740a"
